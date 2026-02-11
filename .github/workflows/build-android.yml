@@ -33,49 +33,48 @@ jobs:
       run: chmod +x gradlew
       
     - name: Create debug keystore
-      working-directory: ./apps/android
       run: |
-        # Create debug.keystore if it doesn't exist
-        if [ ! -f ~/.android/debug.keystore ]; then
-          mkdir -p ~/.android
-          keytool -genkey -v -keystore ~/.android/debug.keystore \
-            -storepass android -alias androiddebugkey \
-            -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-        fi
-        echo "DEBUG_KEYSTORE_PATH=~/.android/debug.keystore" >> $GITHUB_ENV
+        mkdir -p ~/.android
+        keytool -genkey -v -keystore ~/.android/debug.keystore \
+          -storepass android -alias androiddebugkey \
+          -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
+          -dname "CN=Android Debug,O=Android,C=US"
       
-    - name: Build Debug APK (signed)
+    - name: Build Debug APK
+      working-directory: ./apps/android
+      run: ./gradlew assembleDebug
+      
+    - name: Sign Debug APK
       working-directory: ./apps/android
       run: |
-        ./gradlew assembleDebug
-        # Sign with debug key if not already signed
-        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner sign \
+        APK_INPUT=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+        BUILD_TOOLS=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | sort -V | tail -1)
+        "${BUILD_TOOLS}/apksigner" sign \
           --ks ~/.android/debug.keystore \
           --ks-pass pass:android \
           --key-pass pass:android \
           --ks-key-alias androiddebugkey \
           --out app/build/outputs/apk/debug/openclaw-debug-signed.apk \
-          app/build/outputs/apk/debug/*.apk || cp app/build/outputs/apk/debug/*.apk app/build/outputs/apk/debug/openclaw-debug-signed.apk
+          "$APK_INPUT"
+        "${BUILD_TOOLS}/apksigner" verify -v app/build/outputs/apk/debug/openclaw-debug-signed.apk
       
-    - name: Build Release APK (signed with debug key)
+    - name: Build Release APK
+      working-directory: ./apps/android
+      run: ./gradlew assembleRelease
+      
+    - name: Sign Release APK
       working-directory: ./apps/android
       run: |
-        ./gradlew assembleRelease
-        # Sign the release APK with debug key
-        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner sign \
+        APK_INPUT=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+        BUILD_TOOLS=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | sort -V | tail -1)
+        "${BUILD_TOOLS}/apksigner" sign \
           --ks ~/.android/debug.keystore \
           --ks-pass pass:android \
           --key-pass pass:android \
           --ks-key-alias androiddebugkey \
           --out app/build/outputs/apk/release/openclaw-release-signed.apk \
-          app/build/outputs/apk/release/*.apk
-      
-    - name: Verify APKs are signed
-      working-directory: ./apps/android
-      run: |
-        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner verify app/build/outputs/apk/debug/openclaw-debug-signed.apk
-        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner verify app/build/outputs/apk/release/openclaw-release-signed.apk
+          "$APK_INPUT"
+        "${BUILD_TOOLS}/apksigner" verify -v app/build/outputs/apk/release/openclaw-release-signed.apk
         echo "✅ APKs signed successfully"
         
     - name: Upload Debug APK
