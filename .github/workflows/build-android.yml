@@ -32,42 +32,62 @@ jobs:
       working-directory: ./apps/android
       run: chmod +x gradlew
       
-    - name: Build Debug APK
-      working-directory: ./apps/android
-      run: ./gradlew assembleDebug
-      
-    - name: Find Debug APK
-      id: find-debug
+    - name: Create debug keystore
       working-directory: ./apps/android
       run: |
-        APK_PATH=$(find app/build/outputs/apk -name "*.apk" | grep -i debug | head -1)
-        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-        echo "Found Debug APK: $APK_PATH"
+        # Create debug.keystore if it doesn't exist
+        if [ ! -f ~/.android/debug.keystore ]; then
+          mkdir -p ~/.android
+          keytool -genkey -v -keystore ~/.android/debug.keystore \
+            -storepass android -alias androiddebugkey \
+            -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+        fi
+        echo "DEBUG_KEYSTORE_PATH=~/.android/debug.keystore" >> $GITHUB_ENV
+      
+    - name: Build Debug APK (signed)
+      working-directory: ./apps/android
+      run: |
+        ./gradlew assembleDebug
+        # Sign with debug key if not already signed
+        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner sign \
+          --ks ~/.android/debug.keystore \
+          --ks-pass pass:android \
+          --key-pass pass:android \
+          --ks-key-alias androiddebugkey \
+          --out app/build/outputs/apk/debug/openclaw-debug-signed.apk \
+          app/build/outputs/apk/debug/*.apk || cp app/build/outputs/apk/debug/*.apk app/build/outputs/apk/debug/openclaw-debug-signed.apk
+      
+    - name: Build Release APK (signed with debug key)
+      working-directory: ./apps/android
+      run: |
+        ./gradlew assembleRelease
+        # Sign the release APK with debug key
+        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner sign \
+          --ks ~/.android/debug.keystore \
+          --ks-pass pass:android \
+          --key-pass pass:android \
+          --ks-key-alias androiddebugkey \
+          --out app/build/outputs/apk/release/openclaw-release-signed.apk \
+          app/build/outputs/apk/release/*.apk
+      
+    - name: Verify APKs are signed
+      working-directory: ./apps/android
+      run: |
+        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner verify app/build/outputs/apk/debug/openclaw-debug-signed.apk
+        ${ANDROID_SDK_ROOT}/build-tools/*/apksigner verify app/build/outputs/apk/release/openclaw-release-signed.apk
+        echo "✅ APKs signed successfully"
         
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
-      if: steps.find-debug.outputs.apk_path != ''
       with:
         name: openclaw-android-debug
-        path: apps/android/${{ steps.find-debug.outputs.apk_path }}
+        path: apps/android/app/build/outputs/apk/debug/openclaw-debug-signed.apk
         retention-days: 90
         
-    - name: Build Release APK (unsigned)
-      working-directory: ./apps/android
-      run: ./gradlew assembleRelease
-      
-    - name: Find Release APK
-      id: find-release
-      working-directory: ./apps/android
-      run: |
-        APK_PATH=$(find app/build/outputs/apk -name "*.apk" | grep -i release | head -1)
-        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-        echo "Found Release APK: $APK_PATH"
-        
-    - name: Upload Release APK
+    - name: Upload Release APK  
       uses: actions/upload-artifact@v4
-      if: steps.find-release.outputs.apk_path != ''
       with:
         name: openclaw-android-release
-        path: apps/android/${{ steps.find-release.outputs.apk_path }}
+        path: apps/android/app/build/outputs/apk/release/openclaw-release-signed.apk
         retention-days: 90
